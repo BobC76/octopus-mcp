@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 
 from octopus_mcp.analysis.billing import ConsumptionPoint, compute_period_cost
 from octopus_mcp.analysis.rate_lookup import RateStream
+from octopus_mcp.uktime import uk_date, uk_midnight
 
 _DEFAULT_CAVEATS = [
     "Models a pure tariff swap; does not include Saving Sessions, Octoplus, or referral credits.",
@@ -105,11 +106,13 @@ def compare_tariffs(
             )
         )
 
-        d = period_from.date()
-        end_d = period_to.date()
+        # UK days, matching resolve_period and billing - a UTC-day walk mislabels every
+        # BST day and splits overnight cheap-rate usage across the wrong dates.
+        d = uk_date(period_from)
+        end_d = uk_date(period_to)
         while d < end_d:
-            day_start = datetime(d.year, d.month, d.day, tzinfo=UTC)
-            day_end = day_start + timedelta(days=1)
+            day_start = uk_midnight(d)
+            day_end = uk_midnight(d + timedelta(days=1))
             cur_d = compute_period_cost(
                 consumption=f.consumption,
                 unit_rates=f.current_unit_rates,
@@ -138,7 +141,7 @@ def compare_tariffs(
     total_delta = total_target - total_current
 
     return TariffComparison(
-        period=(period_from.date(), period_to.date()),
+        period=(uk_date(period_from), uk_date(period_to)),
         target_product_code=target_product_code,
         fuels=fuel_results,
         total_current_pence=total_current,

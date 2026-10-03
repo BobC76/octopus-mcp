@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
 
 from octopus_mcp.analysis.rate_lookup import RateStream
-
-_LONDON = ZoneInfo("Europe/London")
+from octopus_mcp.uktime import uk_date, uk_midnight
 
 
 @dataclass(frozen=True)
@@ -58,19 +56,12 @@ def compute_period_cost(
     # Count local dates, not 24 h steps: a period spanning a clock change is 23 or 25 hours
     # longer or shorter, and stepping 24 h from a UTC midnight both mis-dates every day in
     # BST and adds a phantom day when the clocks go back.
-    def _local(ts: datetime) -> datetime:
-        return (ts if ts.tzinfo else ts.replace(tzinfo=UTC)).astimezone(_LONDON)
-
-    # One charge per UK midnight in [period_from, period_to).
     standing_total_p = 0.0
     standing_skipped = 0
-    start = _local(period_from)
-    d = (
-        start.date()
-        if start.timetz().replace(tzinfo=None) == time(0)
-        else start.date() + timedelta(days=1)
-    )
-    while (midnight := datetime.combine(d, time(0), tzinfo=_LONDON).astimezone(UTC)) < period_to:
+    d = uk_date(period_from)
+    if uk_midnight(d) < period_from:  # period starts mid-day: its first midnight is tomorrow's
+        d += timedelta(days=1)
+    while (midnight := uk_midnight(d)) < period_to:
         rate = standing_charges.rate_at(midnight)
         if rate is None:
             standing_skipped += 1

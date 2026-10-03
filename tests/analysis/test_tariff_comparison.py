@@ -99,3 +99,37 @@ def test_per_day_breakdown_present() -> None:
     assert len(result.breakdown_by_day) == 2
     days = [d.date.isoformat() for d in result.breakdown_by_day]
     assert "2026-04-25" in days
+
+
+def test_daily_breakdown_is_dated_by_uk_day_in_bst() -> None:
+    """Second review, confirmed by running it: 1-4 Sep came back as 31 Aug - 2 Sep."""
+    from datetime import date
+
+    from octopus_mcp.tools.period import PeriodSpec, resolve_period
+
+    pf, pt = resolve_period(
+        PeriodSpec(kind="explicit", from_date=date(2026, 9, 1), to_date=date(2026, 9, 4)),
+        now=datetime(2026, 10, 3, tzinfo=UTC),
+    )
+    flat = RateStream([RateWindow(datetime(2026, 1, 1, tzinfo=UTC), None, 10.0)])
+    result = compare_tariffs(
+        target_product_code="X",
+        period_from=pf,
+        period_to=pt,
+        fuels=[
+            FuelInputs(
+                fuel="electricity",
+                consumption=[],
+                current_unit_rates=flat,
+                current_standing=flat,
+                target_unit_rates=flat,
+                target_standing=flat,
+            )
+        ],
+    )
+    assert result.period == (date(2026, 9, 1), date(2026, 9, 4))
+    assert [d.date for d in result.breakdown_by_day] == [
+        date(2026, 9, 1),
+        date(2026, 9, 2),
+        date(2026, 9, 3),
+    ]

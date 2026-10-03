@@ -72,3 +72,29 @@ def test_standing_charge_counts_uk_days_across_the_clock_change() -> None:
         consumption=[], unit_rates=sc, standing_charges=sc, period_from=pf, period_to=pt
     )
     assert cost.standing_pence == 350  # 7 days, not 8
+
+
+def test_last_7_days_is_seven_uk_days_across_the_clock_change() -> None:
+    """Second review, confirmed by running it: 7 x 24 h from a UTC midnight started the
+    week at 01:00 UK time after the clocks went back, and billed 6 standing charges."""
+    from octopus_mcp.analysis.billing import compute_period_cost
+    from octopus_mcp.analysis.rate_lookup import RateStream, RateWindow
+
+    pf, pt = resolve_period(
+        PeriodSpec(kind="last_7_days"), now=datetime(2026, 10, 28, 9, tzinfo=UTC)
+    )
+    london = ZoneInfo("Europe/London")
+    assert pf.astimezone(london).hour == 0 and pf.astimezone(london).date() == date(2026, 10, 21)
+    assert pt.astimezone(london).hour == 0 and pt.astimezone(london).date() == date(2026, 10, 28)
+    sc = RateStream([RateWindow(datetime(2026, 1, 1, tzinfo=UTC), None, 50.0)])
+    cost = compute_period_cost(
+        consumption=[], unit_rates=sc, standing_charges=sc, period_from=pf, period_to=pt
+    )
+    assert cost.standing_pence == 350
+
+
+def test_period_labels_are_uk_dates() -> None:
+    from octopus_mcp.tools.period import period_label
+
+    pf, pt = resolve_period(PeriodSpec(kind="last_month"), now=datetime(2026, 10, 3, tzinfo=UTC))
+    assert period_label(pf, pt) == {"from": "2026-09-01", "to": "2026-10-01"}

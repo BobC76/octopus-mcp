@@ -8,7 +8,7 @@ from typing import Any, Literal
 from octopus_mcp.analysis.aggregations import GroupBy, aggregate, summary_stats
 from octopus_mcp.analysis.billing import ConsumptionPoint
 from octopus_mcp.tools.meter_select import consumption_for
-from octopus_mcp.tools.period import PeriodSpec, resolve_period
+from octopus_mcp.tools.period import PeriodSpec, period_label, resolve_period
 
 GroupByLiteral = Literal["hour", "day", "week", "month"]
 
@@ -55,7 +55,7 @@ async def usage_breakdown(
         stats[key] = {"min": s.min, "max": s.max, "mean": s.mean, "stdev": s.stdev}
 
     return {
-        "period": {"from": period_from.date().isoformat(), "to": period_to.date().isoformat()},
+        "period": period_label(period_from, period_to),
         "group_by": group_by,
         "fuel_breakdowns": breakdowns,
         "stats": stats,

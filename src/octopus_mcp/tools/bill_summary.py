@@ -9,7 +9,7 @@ from octopus_mcp.analysis.billing import ConsumptionPoint, compute_period_cost
 from octopus_mcp.analysis.rate_lookup import RateStream
 from octopus_mcp.octopus.errors import OctopusError
 from octopus_mcp.tools.meter_select import consumption_for
-from octopus_mcp.tools.period import PeriodSpec, resolve_period
+from octopus_mcp.tools.period import PeriodSpec, period_label, resolve_period
 
 
 async def bill_summary(
@@ -95,6 +95,12 @@ async def bill_summary(
             "total_pence": cost.total_pence,
             "caveats": cost.caveats,
         }
+        if ctx.rates_repo.has_payment_choice(assignment.tariff_code):
+            entry["caveats"] = [
+                *entry["caveats"],
+                f"Priced at the {ctx.rates_repo.prefer} rate; Octopus publishes both. "
+                "Set OCTOPUS_PAYMENT_METHOD=NON_DIRECT_DEBIT if you pay on receipt of bill.",
+            ]
         if is_export:
             # Money paid TO the customer: reported, but never added to the bill total.
             # Export tariffs have no standing charge, so its "missing" caveat is noise.
@@ -108,7 +114,7 @@ async def bill_summary(
         fuel_outputs.append(entry)
 
     return {
-        "period": {"from": period_from.date().isoformat(), "to": period_to.date().isoformat()},
+        "period": period_label(period_from, period_to),
         "fuels": fuel_outputs,
         "fuels_unavailable": fuels_unavailable,
         "caveats": export_problems,

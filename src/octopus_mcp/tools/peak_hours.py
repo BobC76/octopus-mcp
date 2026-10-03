@@ -8,7 +8,7 @@ from typing import Any
 from octopus_mcp.analysis.billing import ConsumptionPoint
 from octopus_mcp.analysis.peaks import top_n_half_hours
 from octopus_mcp.tools.meter_select import consumption_for
-from octopus_mcp.tools.period import PeriodSpec, resolve_period
+from octopus_mcp.tools.period import PeriodSpec, period_label, resolve_period
 
 
 async def peak_hours(
@@ -41,7 +41,7 @@ async def peak_hours(
         ]
 
     return {
-        "period": {"from": period_from.date().isoformat(), "to": period_to.date().isoformat()},
+        "period": period_label(period_from, period_to),
         "top_n": top_n,
         "fuels": out_fuels,
     }

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
 from typing import Any, Literal
-from zoneinfo import ZoneInfo
 
 from octopus_mcp.analysis.rate_lookup import RateStream
-
-_LONDON = ZoneInfo("Europe/London")
+from octopus_mcp.uktime import LONDON as _LONDON
+from octopus_mcp.uktime import uk_midnight
 
 # (label, fuel, is_export). Import first: it is what "my tariff" means.
 _SOURCES: tuple[tuple[str, str, bool], ...] = (
@@ -69,6 +68,8 @@ async def current_tariff(*, ctx: Any, now: datetime | None = None) -> dict[str, 
             "unit_rate_pence_inc_vat": unit_now.rate_at(now),
             "standing_charge_pence_inc_vat": RateStream.from_rows(sc_rates).rate_at(now),
         }
+        if ctx.rates_repo.has_payment_choice(assignment.tariff_code):
+            entry["payment_method_assumed"] = ctx.rates_repo.prefer
         # Only when the price changes WITHIN today - a flat tariff with past price-cap
         # changes has several historical values but one rate all day.
         if len(todays_prices) > 1:
@@ -82,9 +83,7 @@ async def current_tariff(*, ctx: Any, now: datetime | None = None) -> dict[str, 
 
 
 def _local_day_bounds(day: date) -> tuple[datetime, datetime]:
-    start = datetime.combine(day, time(0), tzinfo=_LONDON)
-    end = datetime.combine(day + timedelta(days=1), time(0), tzinfo=_LONDON)
-    return start.astimezone(UTC), end.astimezone(UTC)
+    return uk_midnight(day), uk_midnight(day + timedelta(days=1))
 
 
 def day_bands(rows: Any, day_start: datetime, day_end: datetime) -> list[dict[str, Any]]:

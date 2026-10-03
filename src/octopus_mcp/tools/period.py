@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
-from typing import Literal
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, timedelta
+from typing import Any, Literal
+
+from octopus_mcp.uktime import LONDON, uk_date, uk_midnight
 
 # Octopus bills UK days, and usage_breakdown buckets by UK-local day. Periods were built on
 # UTC midnights, so during BST every boundary was an hour out - on a time-of-use tariff the
 # overnight cheap-rate charging straddles exactly that hour.
-_LONDON = ZoneInfo("Europe/London")
 
 PeriodKind = Literal["last_month", "last_7_days", "last_quarter", "ytd", "explicit"]
 
@@ -31,17 +31,20 @@ class PeriodSpec:
                 raise ValueError("period exceeds maximum of 2 years")
 
 
-def _start_of(d: date) -> datetime:
-    """UK-local midnight at the start of ``d``, as a UTC datetime."""
-    return datetime.combine(d, time(0), tzinfo=_LONDON).astimezone(UTC)
+_start_of = uk_midnight
+
+
+def period_label(period_from: datetime, period_to: datetime) -> dict[str, Any]:
+    """The {from, to} dates shown to the user, as UK dates (``to`` is exclusive)."""
+    return {"from": uk_date(period_from).isoformat(), "to": uk_date(period_to).isoformat()}
 
 
 def resolve_period(spec: PeriodSpec, *, now: datetime) -> tuple[datetime, datetime]:
     """Resolve to a [from, to) range of UTC datetimes on UK-local midnights."""
-    now = now.astimezone(_LONDON)
+    now = now.astimezone(LONDON)
     if spec.kind == "last_7_days":
-        end = _start_of(now.date())
-        return end - timedelta(days=7), end
+        # Seven UK DAYS, not 7 x 24 h: across a clock change those differ by an hour.
+        return _start_of(now.date() - timedelta(days=7)), _start_of(now.date())
     if spec.kind == "last_month":
         first_this = now.date().replace(day=1)
         last_first = (first_this - timedelta(days=1)).replace(day=1)
