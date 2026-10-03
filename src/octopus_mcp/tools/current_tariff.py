@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+from itertools import pairwise
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from octopus_mcp.analysis.rate_lookup import RateStream, RateWindow
+from octopus_mcp.analysis.rate_lookup import RateStream
 
 _LONDON = ZoneInfo("Europe/London")
 
@@ -25,15 +26,6 @@ _INTELLIGENT_CAVEAT = (
 Direction = Literal["import", "export"]
 
 
-def _stream(rows: Any) -> RateStream:
-    return RateStream(
-        [
-            RateWindow(valid_from=r.valid_from, valid_to=r.valid_to, value_inc_vat=r.value_inc_vat)
-            for r in rows
-        ]
-    )
-
-
 async def current_tariff(*, ctx: Any, now: datetime | None = None) -> dict[str, Any]:
     """The agreement in force now for import, export (if any) and gas, priced at ``now``.
 
@@ -50,26 +42,39 @@ async def current_tariff(*, ctx: Any, now: datetime | None = None) -> dict[str, 
         )
         if assignment is None:
             continue
-        await ctx.ensure_rates(
-            product_code=assignment.product_code,
-            tariff_code=assignment.tariff_code,
-            fuel=fuel,
+        rates = dict(
+            product_code=assignment.product_code, tariff_code=assignment.tariff_code, fuel=fuel
         )
-        unit_rates = ctx.rates_repo.get_unit_rates(assignment.tariff_code)
+        await ctx.ensure_rates(**rates)
+        unit_now = RateStream.from_rows(ctx.rates_repo.get_unit_rates(assignment.tariff_code))
+        if unit_now.rate_at(now) is None:
+            # Cached within the TTL but before the current window was published (day-ahead
+            # tariffs): refetch once rather than report no rate.
+            await ctx.ensure_rates(**rates, force=True)
+            unit_now = RateStream.from_rows(ctx.rates_repo.get_unit_rates(assignment.tariff_code))
         sc_rates = ctx.rates_repo.get_standing_charges(assignment.tariff_code)
+        day_start, day_end = _local_day_bounds(now.astimezone(_LONDON).date())
+        todays_prices = {
+            b["pence_inc_vat"]
+            for b in day_bands(
+                ctx.rates_repo.get_unit_rates(assignment.tariff_code), day_start, day_end
+            )
+        }
         entry: dict[str, Any] = {
             "fuel": fuel,
             "direction": "export" if is_export else "import",
             "label": label,
             "product_code": assignment.product_code,
             "tariff_code": assignment.tariff_code,
-            "unit_rate_pence_inc_vat": _stream(unit_rates).rate_at(now),
-            "standing_charge_pence_inc_vat": _stream(sc_rates).rate_at(now),
+            "unit_rate_pence_inc_vat": unit_now.rate_at(now),
+            "standing_charge_pence_inc_vat": RateStream.from_rows(sc_rates).rate_at(now),
         }
-        if len({r.value_inc_vat for r in unit_rates}) > 1:
+        # Only when the price changes WITHIN today - a flat tariff with past price-cap
+        # changes has several historical values but one rate all day.
+        if len(todays_prices) > 1:
             entry["note"] = (
-                "Unit rate varies over time; this is the rate right now. "
-                "Use unit_rates for a full day's bands."
+                "Unit rate varies through the day; this is the rate right now. "
+                "Use unit_rates for the full day's bands."
             )
         out.append(entry)
 
@@ -108,6 +113,15 @@ def day_bands(rows: Any, day_start: datetime, day_end: datetime) -> list[dict[st
     ]
 
 
+def _covers(bands: list[dict[str, Any]], day_start: datetime, day_end: datetime) -> bool:
+    """True when the bands run contiguously from day_start to day_end."""
+    if not bands:
+        return False
+    edges = [(datetime.fromisoformat(b["from"]), datetime.fromisoformat(b["to"])) for b in bands]
+    contiguous = all(prev[1] == nxt[0] for prev, nxt in pairwise(edges))
+    return contiguous and edges[0][0] == day_start and edges[-1][1] == day_end
+
+
 async def unit_rates(
     *,
     ctx: Any,
@@ -135,12 +149,17 @@ async def unit_rates(
             "bands": [],
             "caveats": [f"No electricity {direction} agreement covers this date."],
         }
-    await ctx.ensure_rates(
+    rates = dict(
         product_code=assignment.product_code,
         tariff_code=assignment.tariff_code,
         fuel="electricity",
     )
+    await ctx.ensure_rates(**rates)
     bands = day_bands(ctx.rates_repo.get_unit_rates(assignment.tariff_code), day_start, day_end)
+    if not _covers(bands, day_start, day_end):
+        # e.g. Agile's tomorrow, published after the cache was filled: refetch once.
+        await ctx.ensure_rates(**rates, force=True)
+        bands = day_bands(ctx.rates_repo.get_unit_rates(assignment.tariff_code), day_start, day_end)
 
     caveats: list[str] = []
     if not bands:
@@ -148,6 +167,8 @@ async def unit_rates(
             "No rates found for this date. Agile publishes the next day around 16:00, and "
             "only the most recent ~1500 rate windows are fetched."
         )
+    elif not _covers(bands, day_start, day_end):
+        caveats.append("Rates cover only part of this date; the rest is not yet published.")
     if assignment.product_code.startswith("INTELLI-") and not is_export:
         caveats.append(_INTELLIGENT_CAVEAT)
     return {

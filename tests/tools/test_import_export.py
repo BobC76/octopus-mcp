@@ -306,3 +306,113 @@ def test_migration_002_rebuilds_assignments_and_forces_account_refetch() -> None
     assert conn.execute("SELECT COUNT(*) FROM tariff_assignments").fetchone()[0] == 0
     resources = [r[0] for r in conn.execute("SELECT resource FROM sync_state")]
     assert resources == ["rates:electricity:T"]  # only the account cache is invalidated
+
+
+# --- Review findings (Claude code review of this branch) -------------------------------
+
+
+async def test_separate_import_mpans_are_summed_not_merged() -> None:
+    """Two import MPANs (e.g. an Economy 7 storage-heater MPAN) are separate supplies."""
+    ctx = await _ctx()
+    await ctx.ensure_account_bootstrapped()
+    from octopus_mcp.cache.meters import MeterRow
+    from octopus_mcp.tools.meter_select import consumption_for
+
+    ctx.meters_repo.upsert_meters(
+        [
+            MeterRow(
+                account_number="A-1", fuel="electricity", mpan_or_mprn="E7-MPAN", serial_number="E7"
+            )
+        ]
+    )
+    CONSUMPTION["E7"] = _rows(DAY1, [0.5, 0.5])
+    try:
+        rows = await consumption_for(
+            ctx, fuel="electricity", period_from=DAY1, period_to=DAY1 + timedelta(hours=1), now=DAY2
+        )
+    finally:
+        del CONSUMPTION["E7"]
+    assert rows is not None
+    assert [r.consumption_kwh for r in rows] == [1.5, 2.5]  # OLD1 (1, 2) + E7 (0.5, 0.5)
+
+
+async def test_exchanged_out_meter_reporting_zeros_does_not_mask_the_live_one() -> None:
+    ctx = await _ctx()
+    await ctx.ensure_account_bootstrapped()
+    from octopus_mcp.tools.meter_select import consumption_for
+
+    saved = CONSUMPTION["OLD1"]
+    # The old serial (stored first) keeps reporting 0.0 for the new meter's period.
+    CONSUMPTION["OLD1"] = _rows(DAY2, [0.0, 0.0])
+    try:
+        rows = await consumption_for(
+            ctx, fuel="electricity", period_from=DAY2, period_to=DAY2 + timedelta(hours=1), now=DAY2
+        )
+    finally:
+        CONSUMPTION["OLD1"] = saved
+    assert rows is not None
+    assert [r.consumption_kwh for r in rows] == [3.0, 4.0]  # NEW1's readings, not zeros
+
+
+async def test_flat_tariff_with_price_history_gets_no_time_of_use_note() -> None:
+    ctx = await _ctx()
+    _seed_rates(ctx)  # gives the export tariff one flat rate
+    # Add a past price-cap change to export: two historical values, one rate all day.
+    ctx.rates_repo.upsert_unit_rates(
+        tariff_code=EXPORT_TARIFF,
+        fuel="electricity",
+        rows=[
+            RateRow(
+                valid_from=datetime(2024, 1, 1, tzinfo=UTC),
+                valid_to=datetime(2025, 1, 1, tzinfo=UTC),
+                value_inc_vat=15.0,
+                value_exc_vat=15.0,
+            )
+        ],
+    )
+    out = await current_tariff(ctx=ctx, now=datetime(2026, 10, 3, 12, tzinfo=UTC))
+    by_label = {f["label"]: f for f in out["fuels"]}
+    assert "note" not in by_label["electricity_export"]
+    assert "note" in by_label["electricity"]  # genuinely peak/off-peak
+
+
+async def test_rates_cached_before_publication_are_refetched_once() -> None:
+    """Day-ahead tariffs: the 24 h rate cache can predate the window being asked about."""
+    ctx = await _ctx()
+    calls: list[bool] = []
+
+    async def _ensure_rates(**k: Any) -> None:
+        calls.append(bool(k.get("force")))
+        if k.get("force"):
+            _seed_rates(ctx)  # what a fresh fetch would now return
+
+    ctx.ensure_rates = AsyncMock(side_effect=_ensure_rates)
+    out = await unit_rates(ctx=ctx, day=date(2026, 10, 3))
+    assert calls[:2] == [False, True]
+    assert len(out["bands"]) == 3
+
+
+async def test_an_export_pricing_failure_does_not_fail_the_whole_bill() -> None:
+    from octopus_mcp.octopus.errors import NotFoundError
+
+    ctx = await _ctx()
+    _seed_rates(ctx)
+
+    async def _ensure_rates(**k: Any) -> None:
+        if k["tariff_code"] == EXPORT_TARIFF:
+            raise NotFoundError("no standing charges for export product", resource=EXPORT_TARIFF)
+
+    ctx.ensure_rates = AsyncMock(side_effect=_ensure_rates)
+    period = PeriodSpec(kind="explicit", from_date=date(2026, 9, 1), to_date=date(2026, 9, 3))
+    out = await bill_summary(period=period, ctx=ctx, now=datetime(2026, 10, 3, tzinfo=UTC))
+    assert [f["direction"] for f in out["fuels"]] == ["import"]
+    assert out["caveats"] and "Export not priced" in out["caveats"][0]
+
+
+async def test_list_meters_defaults_to_import_only() -> None:
+    ctx = await _ctx()
+    await ctx.ensure_account_bootstrapped()
+    meters = ctx.meters_repo.list_meters_for_account("A-1", fuel="electricity")
+    assert meters and not any(m.is_export for m in meters)
+    both = ctx.meters_repo.list_meters_for_account("A-1", fuel="electricity", is_export=None)
+    assert any(m.is_export for m in both)

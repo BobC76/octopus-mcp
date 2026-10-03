@@ -6,20 +6,13 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from octopus_mcp.analysis.billing import ConsumptionPoint
-from octopus_mcp.analysis.rate_lookup import RateStream, RateWindow
+from octopus_mcp.analysis.rate_lookup import RateStream
 from octopus_mcp.analysis.tariff_comparison import FuelInputs, compare_tariffs
 from octopus_mcp.octopus.errors import NotFoundError
 from octopus_mcp.tools.meter_select import consumption_for
 from octopus_mcp.tools.period import PeriodSpec, resolve_period
 
 FuelChoice = Literal["electricity", "gas", "both"]
-
-
-def _windows(rows: Any) -> list[RateWindow]:
-    return [
-        RateWindow(valid_from=r.valid_from, valid_to=r.valid_to, value_inc_vat=r.value_inc_vat)
-        for r in rows
-    ]
 
 
 def _intelligent_octopus_guard(target_product_code: str) -> None:
@@ -50,10 +43,8 @@ async def compare_tariff(
     for f in fuels_to_check:
         # Import only. Swapping the import tariff does not change export payments, so the
         # export meter is out of this comparison by design (see the caveat added below).
-        rows = await consumption_for(
-            ctx, fuel=f, period_from=period_from, period_to=period_to, now=now
-        )
-        if rows is None:
+        # Local checks first, so no consumption is fetched for a fuel we cannot compare.
+        if not ctx.meters_repo.list_meters_for_account(ctx.creds.account_number, fuel=f):
             continue
         current = ctx.meters_repo.current_tariff_assignment(
             account_number=ctx.creds.account_number, fuel=f, at=period_from
@@ -66,6 +57,10 @@ async def compare_tariff(
             product_code=current.product_code, tariff_code=current.tariff_code, fuel=f
         )
         await ctx.ensure_rates(product_code=target_product_code, tariff_code=target_tariff, fuel=f)
+        rows = await consumption_for(
+            ctx, fuel=f, period_from=period_from, period_to=period_to, now=now
+        )
+        assert rows is not None  # a meter exists, checked above
 
         fuels.append(
             FuelInputs(
@@ -76,17 +71,17 @@ async def compare_tariff(
                     )
                     for r in rows
                 ],
-                current_unit_rates=RateStream(
-                    _windows(ctx.rates_repo.get_unit_rates(current.tariff_code))
+                current_unit_rates=RateStream.from_rows(
+                    ctx.rates_repo.get_unit_rates(current.tariff_code)
                 ),
-                current_standing=RateStream(
-                    _windows(ctx.rates_repo.get_standing_charges(current.tariff_code))
+                current_standing=RateStream.from_rows(
+                    ctx.rates_repo.get_standing_charges(current.tariff_code)
                 ),
-                target_unit_rates=RateStream(
-                    _windows(ctx.rates_repo.get_unit_rates(target_tariff))
+                target_unit_rates=RateStream.from_rows(
+                    ctx.rates_repo.get_unit_rates(target_tariff)
                 ),
-                target_standing=RateStream(
-                    _windows(ctx.rates_repo.get_standing_charges(target_tariff))
+                target_standing=RateStream.from_rows(
+                    ctx.rates_repo.get_standing_charges(target_tariff)
                 ),
             )
         )

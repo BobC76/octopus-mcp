@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -16,6 +18,18 @@ class RateWindow:
 
 class RateStream:
     """Sorted rate windows; O(log n) lookup."""
+
+    @classmethod
+    def from_rows(cls, rows: Iterable[Any]) -> RateStream:
+        """Build from any rows with valid_from / valid_to / value_inc_vat (e.g. RateRow)."""
+        return cls(
+            [
+                RateWindow(
+                    valid_from=r.valid_from, valid_to=r.valid_to, value_inc_vat=r.value_inc_vat
+                )
+                for r in rows
+            ]
+        )
 
     def __init__(self, windows: list[RateWindow]) -> None:
         self._windows = sorted(windows, key=lambda w: w.valid_from)

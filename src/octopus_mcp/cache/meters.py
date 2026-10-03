@@ -59,11 +59,10 @@ class MetersRepo:
             )
 
     def list_meters_for_account(
-        self, account_number: str, *, fuel: str | None = None, is_export: bool | None = None
+        self, account_number: str, *, fuel: str | None = None, is_export: bool | None = False
     ) -> list[MeterRow]:
-        """Meters on the account. ``is_export=None`` returns both directions; callers that
-        want consumption should pass ``is_export=False`` so an export meter is never read as
-        usage."""
+        """Meters on the account, IMPORT only by default so an export meter can never be
+        read as usage by accident. Pass ``is_export=True`` for export, ``None`` for both."""
         sql = "SELECT * FROM meters WHERE account_number=?"
         params: list[object] = [account_number]
         if fuel is not None:

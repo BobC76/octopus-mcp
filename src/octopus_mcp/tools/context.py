@@ -63,10 +63,14 @@ def build_helpers(ctx: ToolContext) -> _Helpers:
     from octopus_mcp.cache.rates import RateRow
     from octopus_mcp.octopus.errors import NotFoundError
 
-    async def ensure_rates(*, product_code: str, tariff_code: str, fuel: str) -> None:
+    async def ensure_rates(
+        *, product_code: str, tariff_code: str, fuel: str, force: bool = False
+    ) -> None:
+        """Fetch and cache a tariff's rates (24 h TTL). ``force`` refetches regardless: day-
+        ahead tariffs such as Agile publish tomorrow's prices mid-afternoon, inside the TTL."""
         key = f"rates:{fuel}:{tariff_code}"
         now = datetime.now(UTC)
-        if ctx.sync_state.is_fresh(key, now=now):
+        if not force and ctx.sync_state.is_fresh(key, now=now):
             return
         if fuel == "electricity":
             unit_rows = await ctx.rest.get_electricity_unit_rates(product_code, tariff_code)

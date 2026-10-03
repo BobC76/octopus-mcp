@@ -25,6 +25,7 @@ from octopus_mcp.tools.bill_summary import bill_summary as _bill_summary_impl
 from octopus_mcp.tools.compare_tariff import FuelChoice
 from octopus_mcp.tools.compare_tariff import compare_tariff as _compare_tariff_impl
 from octopus_mcp.tools.context import ToolContext, build_helpers
+from octopus_mcp.tools.current_tariff import Direction
 from octopus_mcp.tools.current_tariff import current_tariff as _current_tariff_impl
 from octopus_mcp.tools.current_tariff import unit_rates as _unit_rates_impl
 from octopus_mcp.tools.peak_hours import peak_hours as _peak_hours_impl
@@ -109,19 +110,13 @@ def _build_app(*, test_mode: bool = False) -> tuple[FastMCP, ToolContext | None]
         assert ctx is not None
         return cast(dict[str, Any], await _wrap_call(_current_tariff_impl(ctx=ctx)))
 
-    async def unit_rates(day: date | None = None, direction: str = "import") -> dict[str, Any]:
+    async def unit_rates(
+        day: date | None = None, direction: Direction = "import"
+    ) -> dict[str, Any]:
         assert ctx is not None
-        if direction not in ("import", "export"):
-            return {
-                "code": "ValueError",
-                "message": "direction must be import or export",
-                "retryable": False,
-            }
         return cast(
             dict[str, Any],
-            await _wrap_call(
-                _unit_rates_impl(ctx=ctx, day=day, direction=direction)  # type: ignore[arg-type]
-            ),
+            await _wrap_call(_unit_rates_impl(ctx=ctx, day=day, direction=direction)),
         )
 
     async def usage_breakdown(period: PeriodArg, group_by: str = "day") -> dict[str, Any]:
