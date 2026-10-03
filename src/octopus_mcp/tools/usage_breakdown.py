@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from octopus_mcp.analysis.aggregations import GroupBy, aggregate, summary_stats
 from octopus_mcp.analysis.billing import ConsumptionPoint
+from octopus_mcp.tools.meter_select import consumption_for
 from octopus_mcp.tools.period import PeriodSpec, resolve_period
 
 GroupByLiteral = Literal["hour", "day", "week", "month"]
@@ -27,27 +28,31 @@ async def usage_breakdown(
     breakdowns: dict[str, list[dict[str, Any]]] = {}
     stats: dict[str, dict[str, float]] = {}
 
-    for fuel in ("electricity", "gas"):
-        meters = ctx.meters_repo.list_meters_for_account(ctx.creds.account_number, fuel=fuel)
-        if not meters:
-            continue
-        meter = meters[0]
-        rows = await ctx.consumption_syncer.ensure(
+    # Keys stay "electricity" (import) and "gas"; export, when the account has it, is
+    # reported separately so it can never be mistaken for usage.
+    for key, fuel, is_export in (
+        ("electricity", "electricity", False),
+        ("electricity_export", "electricity", True),
+        ("gas", "gas", False),
+    ):
+        rows = await consumption_for(
+            ctx,
             fuel=fuel,
-            mpan_or_mprn=meter.mpan_or_mprn,
-            serial_number=meter.serial_number,
             period_from=period_from,
             period_to=period_to,
             now=now,
+            is_export=is_export,
         )
+        if rows is None:
+            continue
         points = [
             ConsumptionPoint(interval_start=r.interval_start, consumption_kwh=r.consumption_kwh)
             for r in rows
         ]
         buckets = aggregate(points, group_by=gb)
-        breakdowns[fuel] = [{"label": b.label, "kwh": b.kwh} for b in buckets]
+        breakdowns[key] = [{"label": b.label, "kwh": b.kwh} for b in buckets]
         s = summary_stats([b.kwh for b in buckets])
-        stats[fuel] = {"min": s.min, "max": s.max, "mean": s.mean, "stdev": s.stdev}
+        stats[key] = {"min": s.min, "max": s.max, "mean": s.mean, "stdev": s.stdev}
 
     return {
         "period": {"from": period_from.date().isoformat(), "to": period_to.date().isoformat()},

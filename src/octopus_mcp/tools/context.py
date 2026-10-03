@@ -159,6 +159,7 @@ def build_helpers(ctx: ToolContext) -> _Helpers:
                             tariff_code=agreement.tariff_code,
                             valid_from=agreement.valid_from,
                             valid_to=agreement.valid_to,
+                            is_export=emp.is_export,
                         )
                     )
             for gmp in prop.gas_meter_points:

@@ -26,6 +26,7 @@ from octopus_mcp.tools.compare_tariff import FuelChoice
 from octopus_mcp.tools.compare_tariff import compare_tariff as _compare_tariff_impl
 from octopus_mcp.tools.context import ToolContext, build_helpers
 from octopus_mcp.tools.current_tariff import current_tariff as _current_tariff_impl
+from octopus_mcp.tools.current_tariff import unit_rates as _unit_rates_impl
 from octopus_mcp.tools.peak_hours import peak_hours as _peak_hours_impl
 from octopus_mcp.tools.period import PeriodSpec
 from octopus_mcp.tools.thin import get_account as _get_account_impl
@@ -108,6 +109,21 @@ def _build_app(*, test_mode: bool = False) -> tuple[FastMCP, ToolContext | None]
         assert ctx is not None
         return cast(dict[str, Any], await _wrap_call(_current_tariff_impl(ctx=ctx)))
 
+    async def unit_rates(day: date | None = None, direction: str = "import") -> dict[str, Any]:
+        assert ctx is not None
+        if direction not in ("import", "export"):
+            return {
+                "code": "ValueError",
+                "message": "direction must be import or export",
+                "retryable": False,
+            }
+        return cast(
+            dict[str, Any],
+            await _wrap_call(
+                _unit_rates_impl(ctx=ctx, day=day, direction=direction)  # type: ignore[arg-type]
+            ),
+        )
+
     async def usage_breakdown(period: PeriodArg, group_by: str = "day") -> dict[str, Any]:
         assert ctx is not None
         return cast(
@@ -182,7 +198,15 @@ def _build_app(*, test_mode: bool = False) -> tuple[FastMCP, ToolContext | None]
         bill_summary, name="bill_summary", description="Total cost (£/pence) per fuel for a period"
     )
     app.add_tool(
-        current_tariff, name="current_tariff", description="Currently active tariff per fuel"
+        current_tariff,
+        name="current_tariff",
+        description="Tariff in force now for electricity import, export (if any) and gas",
+    )
+    app.add_tool(
+        unit_rates,
+        name="unit_rates",
+        description="Electricity unit-rate bands for one UK day (e.g. peak/off-peak); "
+        "day=YYYY-MM-DD, default today; direction=import|export",
     )
     app.add_tool(
         usage_breakdown, name="usage_breakdown", description="Aggregated kWh by hour/day/week/month"

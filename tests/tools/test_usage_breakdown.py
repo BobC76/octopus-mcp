@@ -16,9 +16,9 @@ class _R:
 async def test_usage_breakdown_groups_by_day() -> None:
     ctx = MagicMock()
     ctx.creds.account_number = "A-1"
-    ctx.meters_repo.list_meters_for_account.side_effect = lambda acct, fuel: (
+    ctx.meters_repo.list_meters_for_account.side_effect = lambda acct, fuel, is_export=None: (
         [MeterRow(account_number="A-1", fuel=fuel, mpan_or_mprn="m", serial_number="s")]
-        if fuel == "electricity"
+        if fuel == "electricity" and not is_export
         else []
     )
     ctx.consumption_syncer.ensure = AsyncMock(

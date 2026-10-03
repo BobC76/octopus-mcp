@@ -10,9 +10,9 @@ from octopus_mcp.tools.period import PeriodSpec
 async def test_bill_summary_basic_electricity_only() -> None:
     ctx = MagicMock()
     ctx.creds.account_number = "A-1"
-    ctx.meters_repo.list_meters_for_account.side_effect = lambda acct, fuel: (
+    ctx.meters_repo.list_meters_for_account.side_effect = lambda acct, fuel, is_export=None: (
         [MeterRow(account_number="A-1", fuel="electricity", mpan_or_mprn="123", serial_number="S")]
-        if fuel == "electricity"
+        if fuel == "electricity" and not is_export
         else []
     )
     ctx.meters_repo.current_tariff_assignment.return_value = TariffAssignmentRow(
@@ -76,9 +76,9 @@ async def test_bill_summary_basic_electricity_only() -> None:
 async def test_bill_summary_no_gas_meter_lists_unavailable() -> None:
     ctx = MagicMock()
     ctx.creds.account_number = "A-1"
-    ctx.meters_repo.list_meters_for_account.side_effect = lambda acct, fuel: (
+    ctx.meters_repo.list_meters_for_account.side_effect = lambda acct, fuel, is_export=None: (
         [MeterRow(account_number="A-1", fuel="electricity", mpan_or_mprn="123", serial_number="S")]
-        if fuel == "electricity"
+        if fuel == "electricity" and not is_export
         else []
     )
     ctx.meters_repo.current_tariff_assignment.return_value = TariffAssignmentRow(

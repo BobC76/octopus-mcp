@@ -36,6 +36,7 @@ class TariffAssignmentRow:
     tariff_code: str
     valid_from: datetime
     valid_to: datetime | None
+    is_export: bool = False
 
 
 class MetersRepo:
@@ -58,16 +59,20 @@ class MetersRepo:
             )
 
     def list_meters_for_account(
-        self, account_number: str, *, fuel: str | None = None
+        self, account_number: str, *, fuel: str | None = None, is_export: bool | None = None
     ) -> list[MeterRow]:
+        """Meters on the account. ``is_export=None`` returns both directions; callers that
+        want consumption should pass ``is_export=False`` so an export meter is never read as
+        usage."""
+        sql = "SELECT * FROM meters WHERE account_number=?"
+        params: list[object] = [account_number]
         if fuel is not None:
-            rs = self._conn.execute(
-                "SELECT * FROM meters WHERE account_number=? AND fuel=?", (account_number, fuel)
-            ).fetchall()
-        else:
-            rs = self._conn.execute(
-                "SELECT * FROM meters WHERE account_number=?", (account_number,)
-            ).fetchall()
+            sql += " AND fuel=?"
+            params.append(fuel)
+        if is_export is not None:
+            sql += " AND is_export=?"
+            params.append(int(is_export))
+        rs = self._conn.execute(sql + " ORDER BY rowid", params).fetchall()
         return [
             MeterRow(
                 account_number=r["account_number"],
@@ -83,9 +88,10 @@ class MetersRepo:
         with self._conn:
             self._conn.executemany(
                 """
-                INSERT INTO tariff_assignments (account_number, fuel, product_code, tariff_code, valid_from, valid_to)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(account_number, fuel, valid_from)
+                INSERT INTO tariff_assignments
+                    (account_number, fuel, is_export, product_code, tariff_code, valid_from, valid_to)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_number, fuel, is_export, valid_from)
                 DO UPDATE SET product_code=excluded.product_code,
                               tariff_code=excluded.tariff_code,
                               valid_to=excluded.valid_to
@@ -94,6 +100,7 @@ class MetersRepo:
                     (
                         r.account_number,
                         r.fuel,
+                        int(r.is_export),
                         r.product_code,
                         r.tariff_code,
                         _iso(r.valid_from),
@@ -104,17 +111,19 @@ class MetersRepo:
             )
 
     def current_tariff_assignment(
-        self, *, account_number: str, fuel: str, at: datetime
+        self, *, account_number: str, fuel: str, at: datetime, is_export: bool = False
     ) -> TariffAssignmentRow | None:
+        """The agreement in force at ``at`` for one direction. Defaults to import: an
+        account with solar export has two concurrent electricity agreements."""
         row = self._conn.execute(
             """
             SELECT * FROM tariff_assignments
-             WHERE account_number=? AND fuel=?
+             WHERE account_number=? AND fuel=? AND is_export=?
                AND valid_from <= ?
                AND (valid_to IS NULL OR valid_to > ?)
              ORDER BY valid_from DESC LIMIT 1
             """,
-            (account_number, fuel, _iso(at), _iso(at)),
+            (account_number, fuel, int(is_export), _iso(at), _iso(at)),
         ).fetchone()
         if row is None:
             return None
@@ -125,4 +134,5 @@ class MetersRepo:
             tariff_code=row["tariff_code"],
             valid_from=_parse(row["valid_from"]),  # type: ignore[arg-type]
             valid_to=_parse(row["valid_to"]),
+            is_export=bool(row["is_export"]),
         )
