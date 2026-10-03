@@ -103,6 +103,7 @@ class UnitRate(_Base):
     value_inc_vat: float
     valid_from: datetime
     valid_to: datetime | None = None
+    payment_method: str | None = None  # DIRECT_DEBIT / NON_DIRECT_DEBIT / None
 
 
 class UnitRatePage(Page[UnitRate]):
@@ -114,6 +115,7 @@ class StandingCharge(_Base):
     value_inc_vat: float
     valid_from: datetime
     valid_to: datetime | None = None
+    payment_method: str | None = None
 
 
 class StandingChargePage(Page[StandingCharge]):

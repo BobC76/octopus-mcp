@@ -21,6 +21,19 @@ from octopus_mcp.octopus.rest import OctopusRestClient
 _TARIFF_RE = re.compile(r"^[EG]-(?:1R|2R)-(.+)-[A-Z]$")
 
 
+def prefer_direct_debit(rows: list[Any]) -> list[Any]:
+    """Keep one rate per window: the DIRECT_DEBIT row where the API offers a choice.
+
+    Variable tariffs publish a DIRECT_DEBIT and a NON_DIRECT_DEBIT row for the same
+    window. The rates cache is keyed (tariff_code, valid_from), so storing both let
+    whichever came last silently overwrite the other - a ~5% error either way. Direct
+    debit is what most customers pay and what Home Assistant's Octopus integration shows.
+    """
+    if not any(getattr(r, "payment_method", None) == "DIRECT_DEBIT" for r in rows):
+        return rows
+    return [r for r in rows if getattr(r, "payment_method", None) in ("DIRECT_DEBIT", None)]
+
+
 def _product_from_tariff(tariff_code: str) -> str:
     """Derive product code from a tariff code.
 
@@ -78,6 +91,8 @@ def build_helpers(ctx: ToolContext) -> _Helpers:
         else:
             unit_rows = await ctx.rest.get_gas_unit_rates(product_code, tariff_code)
             sc_rows = await ctx.rest.get_gas_standing_charges(product_code, tariff_code)
+        unit_rows = prefer_direct_debit(unit_rows)
+        sc_rows = prefer_direct_debit(sc_rows)
         ctx.rates_repo.upsert_unit_rates(
             tariff_code=tariff_code,
             fuel=fuel,

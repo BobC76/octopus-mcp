@@ -125,3 +125,35 @@ async def test_product_code_derivation() -> None:
     assert _product_from_tariff("E-1R-GO-VAR-22-10-14-A") == "GO-VAR-22-10-14"
     # Fallback for non-matching shapes
     assert _product_from_tariff("WEIRD-FORMAT") == "WEIRD-FORMAT"
+
+
+async def test_ensure_rates_keeps_direct_debit_when_both_payment_methods_are_published() -> None:
+    """The API returns DIRECT_DEBIT and NON_DIRECT_DEBIT rows for the same window; the
+    cache key let the last one written win, so gas could be ~5% high."""
+    conn = open_db(":memory:")
+    rates_repo = RatesRepo(conn)
+    rest = AsyncMock()
+
+    class _Rate:
+        def __init__(self, vi: float, pm: str) -> None:
+            self.valid_from = datetime(2026, 9, 30, 23, tzinfo=UTC)
+            self.valid_to: datetime | None = None
+            self.value_inc_vat = vi
+            self.value_exc_vat = vi
+            self.payment_method = pm
+
+    both = [_Rate(8.0, "DIRECT_DEBIT"), _Rate(8.4, "NON_DIRECT_DEBIT")]
+    rest.get_gas_unit_rates.return_value = both
+    rest.get_gas_standing_charges.return_value = both
+
+    ctx = MagicMock()
+    ctx.rest = rest
+    ctx.rates_repo = rates_repo
+    ctx.sync_state = MagicMock()
+    ctx.sync_state.is_fresh.return_value = False
+    helpers = build_helpers(ctx)
+
+    await helpers.ensure_rates(
+        product_code="VAR-22-11-01", tariff_code="G-1R-VAR-22-11-01-A", fuel="gas"
+    )
+    assert [r.value_inc_vat for r in rates_repo.get_unit_rates("G-1R-VAR-22-11-01-A")] == [8.0]

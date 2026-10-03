@@ -104,7 +104,7 @@ def day_bands(rows: Any, day_start: datetime, day_end: datetime) -> list[dict[st
     return [
         {
             "from_local": s.astimezone(_LONDON).strftime("%H:%M"),
-            "to_local": e.astimezone(_LONDON).strftime("%H:%M"),
+            "to_local": "24:00" if e == day_end else e.astimezone(_LONDON).strftime("%H:%M"),
             "from": s.isoformat(),
             "to": e.isoformat(),
             "pence_inc_vat": v,

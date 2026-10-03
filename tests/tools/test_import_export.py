@@ -274,7 +274,7 @@ async def test_unit_rates_gives_uk_local_bands_with_intelligent_caveat() -> None
     assert [(b["from_local"], b["to_local"], b["pence_inc_vat"]) for b in out["bands"]] == [
         ("00:00", "05:30", 7.0),
         ("05:30", "23:30", 28.0),
-        ("23:30", "00:00", 7.0),
+        ("23:30", "24:00", 7.0),
     ]
     assert any("Intelligent Octopus" in c for c in out["caveats"])
 
@@ -305,7 +305,8 @@ def test_migration_002_rebuilds_assignments_and_forces_account_refetch() -> None
     assert "is_export" in cols
     assert conn.execute("SELECT COUNT(*) FROM tariff_assignments").fetchone()[0] == 0
     resources = [r[0] for r in conn.execute("SELECT resource FROM sync_state")]
-    assert resources == ["rates:electricity:T"]  # only the account cache is invalidated
+    assert "account:A-1" not in resources  # 002: account re-fetched
+    assert "rates:electricity:T" not in resources  # 003: rates re-fetched (payment method)
 
 
 # --- Review findings (Claude code review of this branch) -------------------------------
