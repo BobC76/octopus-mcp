@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
+
+# Octopus bills UK days, and usage_breakdown buckets by UK-local day. Periods were built on
+# UTC midnights, so during BST every boundary was an hour out - on a time-of-use tariff the
+# overnight cheap-rate charging straddles exactly that hour.
+_LONDON = ZoneInfo("Europe/London")
 
 PeriodKind = Literal["last_month", "last_7_days", "last_quarter", "ytd", "explicit"]
 
@@ -26,10 +32,13 @@ class PeriodSpec:
 
 
 def _start_of(d: date) -> datetime:
-    return datetime(d.year, d.month, d.day, tzinfo=UTC)
+    """UK-local midnight at the start of ``d``, as a UTC datetime."""
+    return datetime.combine(d, time(0), tzinfo=_LONDON).astimezone(UTC)
 
 
 def resolve_period(spec: PeriodSpec, *, now: datetime) -> tuple[datetime, datetime]:
+    """Resolve to a [from, to) range of UTC datetimes on UK-local midnights."""
+    now = now.astimezone(_LONDON)
     if spec.kind == "last_7_days":
         end = _start_of(now.date())
         return end - timedelta(days=7), end
@@ -38,16 +47,16 @@ def resolve_period(spec: PeriodSpec, *, now: datetime) -> tuple[datetime, dateti
         last_first = (first_this - timedelta(days=1)).replace(day=1)
         return _start_of(last_first), _start_of(first_this)
     if spec.kind == "last_quarter":
-        end = _start_of(now.date().replace(day=1))
-        m = end.month - 3
-        y = end.year
+        first_this = now.date().replace(day=1)
+        end = _start_of(first_this)
+        m = first_this.month - 3
+        y = first_this.year
         while m <= 0:
             m += 12
             y -= 1
-        start = datetime(y, m, 1, tzinfo=UTC)
-        return start, end
+        return _start_of(date(y, m, 1)), end
     if spec.kind == "ytd":
-        return datetime(now.year, 1, 1, tzinfo=UTC), _start_of(now.date())
+        return _start_of(date(now.year, 1, 1)), _start_of(now.date())
     if spec.kind == "explicit":
         assert spec.from_date and spec.to_date
         if _start_of(spec.to_date) > now:

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from octopus_mcp.analysis.rate_lookup import RateStream
+
+_LONDON = ZoneInfo("Europe/London")
 
 
 @dataclass(frozen=True)
@@ -51,20 +54,29 @@ def compute_period_cost(
     if skipped:
         caveats.append(f"Skipped {skipped} half-hour(s) with missing rate data")
 
-    # --- standing charge: per-day proration ---
-    day = period_from.replace(hour=0, minute=0, second=0, microsecond=0)
-    if day.tzinfo is None:
-        day = day.replace(tzinfo=UTC)
-    end = period_to
+    # --- standing charge: one per UK calendar day ---
+    # Count local dates, not 24 h steps: a period spanning a clock change is 23 or 25 hours
+    # longer or shorter, and stepping 24 h from a UTC midnight both mis-dates every day in
+    # BST and adds a phantom day when the clocks go back.
+    def _local(ts: datetime) -> datetime:
+        return (ts if ts.tzinfo else ts.replace(tzinfo=UTC)).astimezone(_LONDON)
+
+    # One charge per UK midnight in [period_from, period_to).
     standing_total_p = 0.0
     standing_skipped = 0
-    while day < end:
-        rate = standing_charges.rate_at(day)
+    start = _local(period_from)
+    d = (
+        start.date()
+        if start.timetz().replace(tzinfo=None) == time(0)
+        else start.date() + timedelta(days=1)
+    )
+    while (midnight := datetime.combine(d, time(0), tzinfo=_LONDON).astimezone(UTC)) < period_to:
+        rate = standing_charges.rate_at(midnight)
         if rate is None:
             standing_skipped += 1
         else:
             standing_total_p += rate
-        day += timedelta(days=1)
+        d += timedelta(days=1)
     if standing_skipped:
         caveats.append(f"Missing standing charge for {standing_skipped} day(s)")
 
